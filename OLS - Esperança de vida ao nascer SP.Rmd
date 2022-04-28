@@ -1,0 +1,167 @@
+* 1. Introdução
+    Este projeto tem por objetivo implementar um algoritmo de regressão linear múltipla para predizer a esperança de vida ao nascer por distritos da cidade de São Paulo. A base de dados utilizada é a do IDH-M 2010. Selecionaremos apenas algumas variáveis desta base de dados.
+    
+* 2. Instalando pacotes para regressão linear múltipla
+```{r}
+
+pacotes <- c("plotly","tidyverse","ggrepel","fastDummies","knitr","kableExtra",
+             "splines","reshape2","PerformanceAnalytics","metan","correlation",
+             "see","ggraph","nortest","rgl","car","olsrr","jtools","ggstance",
+             "magick","cowplot","beepr","Rcpp")
+
+if(sum(as.numeric(!pacotes %in% installed.packages())) != 0){
+  instalador <- pacotes[!pacotes %in% installed.packages()]
+  for(i in 1:length(instalador)) {
+    install.packages(instalador, dependencies = T)
+    break()}
+  sapply(pacotes, require, character = T) 
+} else {
+  sapply(pacotes, require, character = T) 
+}
+
+
+```
+
+* 3. Carregando as bases de dados
+```{r}
+
+library(readxl)
+
+base_dados <- read_excel("indicadores_distritos.xlsx")
+
+base_dados <- base_dados[,-c(209)]
+
+```
+
+* 4. Seleção de variáveis com potencial de explicação
+
+    Selecionamos 8 variáveis, quais sejam: Percentual da população de 18 anos ou mais com ensino médio completo, Renda domiciliar per capita mínima do décimo mais rico, Percentual da renda total apropriada pelos 10% da população com maior renda domiciliar per capita, Percentual da população que vive em domicílios com água encanada, Percentual da população que vive em domicílios com energia elétrica, Percentual de pessoas em domicílios com abastecimento de água e esgotamento sanitário inadequados, Percentual de pessoas em domicílios com paredes que não sejam de alvenaria ou madeira aparelhada, Percentual de mulheres de 10 a 17 anos de idade que tiveram filhos. **Vale lembrar que todas essas variáveis são médias**.
+
+```{r}
+
+base_dados <- base_dados %>%
+  select (Nome_Distrito, ESPVIDA, T_MED18M, CORTE9, PREN10RICOS, T_AGUA, T_LUZ, AGUA_ESGOTO, PAREDE, T_M10A17CF)
+
+base_dados <- base_dados %>% 
+  mutate_at(c(3:10), funs(c(scale(.)))) %>% 
+  data.frame()
+
+```
+
+* 5. Visualização das correlações
+
+```{r}
+chart.Correlation(base_dados[,c(2:10)])
+
+```
+
+* 6. Particionando base de dados em treino e teste
+
+```{r}
+set.seed(0)
+
+amostra <- sample(2, nrow(base_dados), replace = T, prob = c(0.7, 0.3))
+treino <- base_dados[amostra == 1,]
+teste <- base_dados [amostra == 2,]
+```
+
+
+* 7. Estimando modelo de treino
+```{r}
+
+modelo_treino <- lm(formula = ESPVIDA ~. - Nome_Distrito, data = treino)
+
+summary(modelo_treino)
+
+```
+
+
+Nota-se que apenas 5 variáveis se apresentaram como estatisticamente significantes a 5% de significância, apesar do modelo ter um R² considerável de 95%. É necessário, portanto, o procedimento stepwise para escolha das variáveis.
+
+* 8. Procedimento stepwise
+
+```{r}
+step_modelo_treino <- step(modelo_treino, k = 3.841459)
+
+summary(step_modelo_treino)
+
+```
+
+* 9. Análise dos resultados
+
+    Após o procedimento stepwise, o modelo agora apresentou 5 variáveis estatisticamente significantes a 5% de significância. As variáveis são: Percentual da população de 18 anos ou mais com ensino médio completo, Renda domiciliar per capita mínima do décimo mais rico, Percentual da renda total apropriada pelos 10% da população com maior renda domiciliar per capita, Percentual da população que vive em domicílios com água encanada, Percentual de pessoas em domicílios com abastecimento de água e esgotamento sanitário inadequados. No entanto, ainda devemos verificar a normalidade dos resíduos.
+ 
+ * 9.1. Análise dos parâmetros
+  
+    Verificamos que a cada aumento em 1 ponto na média do percentual da população de 18 anos ou mais com ensino médio há, em média, aumento de quase 2,5 meses na esperança de vida ao nascer por distrito; algo interessante de observar é que a cada aumento de 1 real na média da renda domiciliar per capta mínima do décimo mais rico há, na verdade, em média, uma redução de 0,0006 anos, ou cerca de 5 horas na esperança de vida ao nascer; por outro lado, o aumento de 1 p.p. na apropriação da renda total domiciliar per capta pelo 10% mais rico da população eleva, em média, cerca de 2,5 meses na média da esperança de vida ao nascer da população. Essa aparente contradição merece um olhar mais aprofundado. Talvez aqui os maiores beneficiados sejam os 10% mais ricos dos distritos mais pobres, já que é a renda domiciliar per capta mínima desta população nestes distritos é muito mais baixa do que naqueles que são pobres. Em Marsilac, por exemplo, essa renda é **R$ 768,00 (preços de 2010), enquanto que no Jardim Paulista chega a mais de R$ 13.000,00**; chama atenção também o estimador da variável AGUA_ESGOTO, que aponta que a cada aumento de 1 p.p. na taxa de pessoas em domicílios com abastecimento de água e esgotamento sanitário inadequados há, em média, uma redução da ordem de 0,24 anos, ou cerca de 3 meses na esperança de vida ao nascer. Cabe mencionar ainda que ao padronizarmos as variáveis explicativas foi possível notar que a variável T_MED18M é a mais relevante para a variação da variável dependente. 
+
+* 10. Teste de normalidade dos resíduos
+    
+```{r include=FALSE}
+sf.test(step_modelo_treino$residuals)
+
+treino %>%
+  mutate(residuos = step_modelo_treino$residuals) %>%
+  ggplot(aes(x = residuos)) +
+  geom_histogram(aes(y = ..density..), 
+                 color = "grey50", 
+                 fill = "gray90", 
+                 bins = 30,
+                 alpha = 0.6) +
+  stat_function(fun = dnorm, 
+                args = list(mean = mean(step_modelo_treino
+                                        $residuals),
+                            sd = sd(step_modelo_treino$residuals)),
+                aes(color = "Curva Normal Teórica"),
+                size = 2) +
+  scale_color_manual("Legenda:",
+                     values = "#440154FF") +
+  labs(x = "Resíduos",
+       y = "Frequência") +
+  theme(panel.background = element_rect("white"),
+        panel.grid = element_line("grey95"),
+        panel.border = element_rect(NA),
+        legend.position = "bottom")
+```
+
+O teste Shapiro-Francia demonstrou que os resíduos estão distribuídos normalmente. Ademais, ainda precisamos verificar se estes parâmetros estão adequados, o que o teste Breusch-Pagan pode indicar, já que verifica a existência de homocedasticidade, ou seja, a constância da variância dos resíduos. 
+
+* 11. Teste Breusch-Pagan - Verificação de pressuposto da homocedasticidade
+
+```{r}
+ols_test_breusch_pagan(step_modelo_treino)
+
+```
+
+O teste indica que não devemos rejeitar a hipótese nula que aponta para homocedasticidade da variância dos termos de erro, respeitando, portanto, mais este pressuposto.
+
+* 12. Comparando fitted values com valores observados
+
+```{r}
+
+resultado_treino <- data.frame(Valor_observado = treino$ESPVIDA, Valor_previsto = predict(step_modelo_treino))
+
+
+```
+
+* 13. Realizando previsão na amostra de teste
+
+```{r}
+previsao <- data.frame(VALOR_PREDITO = predict(step_modelo_treino, teste))
+
+plot(teste$ESPVIDA,type="l",col="red")
+lines((previsao),col="blue")
+legend("topleft", 
+       legend = c("Valores Atuais", "Valores Previstos"), 
+       col = c('red', 'blue'), 
+       pch = c(19,19), 
+       bty = "n", 
+       inset = c(0,0))
+
+teste$VALOR_PREDITO <- previsao$VALOR_PREDITO
+
+teste <- teste[,c(1,2,11,3:10)]
+
+```
+
+
